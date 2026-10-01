@@ -1079,7 +1079,34 @@
         min-height: 320px;
       }
     }
-  </style>
+  
+    /* ========================================
+       BETIPO WIDGET HOST
+       El launcher oficial queda cargado fuera del layout.
+       El modal/overlay que abre sigue siendo el nativo de Betipo.
+    ======================================== */
+    #btp-valuation-widget {
+      position: fixed !important;
+      left: -10000px !important;
+      top: 0 !important;
+      width: 1px !important;
+      height: 1px !important;
+      overflow: visible !important;
+      z-index: 2147483000 !important;
+    }
+
+    /*
+     * Si Betipo monta su modal dentro del host, al abrirlo
+     * devolvemos específicamente overlays/modales a viewport.
+     */
+    #btp-valuation-widget [id*="modal"],
+    #btp-valuation-widget [class*="modal"],
+    #btp-valuation-widget [id*="overlay"],
+    #btp-valuation-widget [class*="overlay"] {
+      left: auto;
+    }
+
+</style>
 </head>
 
 
@@ -1198,7 +1225,6 @@
               type="button"
               class="button button-primary"
               data-open-valuation
-              openBetipoWidget
             >
               Valorar mi vivienda
             </button>
@@ -1418,7 +1444,6 @@
             type="button"
             class="button button-primary valuation-button"
             data-open-valuation
-            openBetipoWidget
           >
             Valorar mi vivienda
           </button>
@@ -1526,7 +1551,6 @@
             type="button"
             class="cta-button"
             data-open-valuation
-            openBetipoWidget
           >
             Valorar mi vivienda
           </button>
@@ -1629,207 +1653,141 @@
 
 
   <!-- ========================================
-       WIDGET BETIPO
-
-       IMPORTANTE:
-       UNA SOLA INSTANCIA DEL WIDGET
+       WIDGET OFICIAL BETIPO
+       UNA SOLA INSTANCIA
   ========================================= -->
 
-
-  
   <div
     id="btp-valuation-widget"
     data-widget-id="e2c76a49-c254-4b98-98ed-92fe7237f9e1"
   ></div>
 
-
-  <!-- SCRIPT OFICIAL BETIPO -->
-
   <script src="https://cdn.betipo.es/widget.js"></script>
 
 
   <!-- ========================================
-       CONTROL DE LOS CTA DE VALORACIÓN
+       CTA NOVACASA -> LAUNCHER REAL DE BETIPO
   ========================================= -->
 
   <script>
-    document.addEventListener("DOMContentLoaded", () => {
-      const widgetContainer =
-        document.getElementById("btp-valuation-widget");
-
-      const valuationButtons =
+    (function () {
+      const host = document.getElementById("btp-valuation-widget");
+      const externalButtons =
         document.querySelectorAll("[data-open-valuation]");
 
-      if (!widgetContainer) {
-        console.error("No se encontró el contenedor del widget de Betipo.");
-        return;
-      }
+      let officialLauncher = null;
+      let pendingOpen = false;
 
-      /*
-       * widget.js carga de forma asíncrona:
-       * - HTML
-       * - CSS
-       * - JavaScript
-       *
-       * El HTML real del widget se inserta dentro de
-       * #btp-valuation-widget después de consultar la API.
-       *
-       * Por eso esperamos a que el contenido exista antes
-       * de intentar localizar el launcher real.
-       */
+      function findOfficialLauncher() {
+        if (!host) return null;
 
-      function getWidgetElements() {
-        return Array.from(
-          widgetContainer.querySelectorAll(
-            "button, a, [role='button'], input[type='button'], input[type='submit']"
-          )
+        /*
+         * El HTML devuelto por Betipo incluye explícitamente
+         * su "Button to open modal". Buscamos el botón raíz
+         * generado por el widget, no botones de pasos internos.
+         */
+        const directButtons = Array.from(
+          host.querySelectorAll(":scope > button")
         );
-      }
 
-      function isVisible(element) {
-        if (!element) return false;
+        if (directButtons.length) {
+          return directButtons[0];
+        }
 
-        const style = window.getComputedStyle(element);
-        const rect = element.getBoundingClientRect();
+        /*
+         * Compatibilidad por si el launcher viene envuelto
+         * en un contenedor adicional.
+         */
+        const buttons = Array.from(host.querySelectorAll("button"));
 
         return (
-          style.display !== "none" &&
-          style.visibility !== "hidden" &&
-          style.opacity !== "0" &&
-          rect.width > 0 &&
-          rect.height > 0
+          buttons.find(function (button) {
+            const cls = String(button.className || "").toLowerCase();
+            const id = String(button.id || "").toLowerCase();
+
+            return (
+              (cls.includes("widget") || cls.includes("widg")) &&
+              !cls.includes("next") &&
+              !cls.includes("back") &&
+              !cls.includes("close") &&
+              !cls.includes("retry") &&
+              !id.includes("next") &&
+              !id.includes("back") &&
+              !id.includes("close")
+            );
+          }) ||
+          buttons[0] ||
+          null
         );
       }
 
-      function findWidgetTrigger() {
-        const elements = getWidgetElements();
+      function cacheLauncher() {
+        const launcher = findOfficialLauncher();
 
-        if (!elements.length) {
-          return null;
-        }
+        if (!launcher) return false;
 
-        /*
-         * Priorizamos elementos visibles que parezcan
-         * ser el launcher del widget.
-         */
-        const keywords = [
-          "valorar",
-          "valoración",
-          "valoracion",
-          "valora",
-          "comenzar",
-          "empezar",
-          "calcular",
-          "tasar"
-        ];
-
-        const semanticTrigger = elements.find((element) => {
-          if (!isVisible(element)) return false;
-
-          const text = [
-            element.textContent || "",
-            element.getAttribute("aria-label") || "",
-            element.getAttribute("title") || "",
-            element.getAttribute("value") || ""
-          ]
-            .join(" ")
-            .trim()
-            .toLowerCase();
-
-          return keywords.some((keyword) => text.includes(keyword));
-        });
-
-        if (semanticTrigger) {
-          return semanticTrigger;
-        }
+        officialLauncher = launcher;
 
         /*
-         * Si el widget solo genera un control visible,
-         * lo utilizamos como launcher.
+         * Ocultamos únicamente el launcher oficial.
+         * No ocultamos el modal/overlay que genera Betipo.
          */
-        const visibleElements = elements.filter(isVisible);
+        officialLauncher.style.position = "fixed";
+        officialLauncher.style.left = "-10000px";
+        officialLauncher.style.top = "0";
 
-        if (visibleElements.length === 1) {
-          return visibleElements[0];
+        if (pendingOpen) {
+          pendingOpen = false;
+          officialLauncher.click();
         }
 
-        return null;
+        return true;
       }
 
-      let widgetTrigger = findWidgetTrigger();
-
-      /*
-       * Esperamos a que widget.js termine de insertar
-       * el HTML que devuelve Betipo.
-       */
-      const observer = new MutationObserver(() => {
-        const trigger = findWidgetTrigger();
-
-        if (trigger) {
-          widgetTrigger = trigger;
-        }
-      });
-
-      observer.observe(widgetContainer, {
-        childList: true,
-        subtree: true
-      });
-
       function openBetipoWidget(event) {
-        event.preventDefault();
+        if (event) event.preventDefault();
 
         /*
-         * Volvemos a buscarlo en cada clic porque el
-         * propio widget puede reconstruir su DOM.
+         * Volvemos a resolverlo porque el widget puede
+         * reconstruir parte de su DOM durante su ciclo.
          */
-        widgetTrigger = findWidgetTrigger();
-
-        if (widgetTrigger) {
-          widgetTrigger.click();
+        if (!cacheLauncher()) {
+          pendingOpen = true;
           return;
         }
 
-        /*
-         * Si el widget aún no terminó de cargar,
-         * esperamos brevemente a que aparezca su launcher.
-         */
-        let attempts = 0;
-        const maxAttempts = 20;
-
-        const waitForWidget = window.setInterval(() => {
-          attempts += 1;
-
-          const trigger = findWidgetTrigger();
-
-          if (trigger) {
-            window.clearInterval(waitForWidget);
-            widgetTrigger = trigger;
-            trigger.click();
-            return;
-          }
-
-          if (attempts >= maxAttempts) {
-            window.clearInterval(waitForWidget);
-
-            console.warn(
-              "El widget de Betipo se cargó, pero no se encontró un launcher público."
-            );
-
-            document
-              .getElementById("valoracion")
-              ?.scrollIntoView({
-                behavior: "smooth",
-                block: "center"
-              });
-          }
-        }, 100);
+        officialLauncher.click();
       }
 
-      valuationButtons.forEach((button) => {
+      externalButtons.forEach(function (button) {
         button.addEventListener("click", openBetipoWidget);
       });
-    });
+
+      /*
+       * widget.js obtiene el HTML de forma asíncrona.
+       * Esperamos al launcher oficial sin modificar
+       * el JavaScript interno de Betipo.
+       */
+      if (!cacheLauncher() && host) {
+        const observer = new MutationObserver(function () {
+          if (cacheLauncher()) {
+            /*
+             * Seguimos observando: algunos pasos del widget
+             * pueden reconstruir nodos.
+             */
+          }
+        });
+
+        observer.observe(host, {
+          childList: true,
+          subtree: true
+        });
+      }
+
+      window.openBetipoWidget = openBetipoWidget;
+    })();
   </script>
+
 
 </body>
 </html>
